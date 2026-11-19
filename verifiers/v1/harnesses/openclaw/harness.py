@@ -62,6 +62,19 @@ if (patched !== source) {
     }
 }
 NODE
+# Older gateways schedule a heartbeat by default; newer gateways reject that setting.
+heartbeat="$AGENT_OPENCLAW_DIR/has-heartbeat-setting"
+if [ ! -f "$heartbeat" ]; then
+    OPENCLAW_STATE_DIR="$AGENT_OPENCLAW_DIR/schema-state" \
+        OPENCLAW_CONFIG_PATH="$AGENT_OPENCLAW_DIR/schema-state/openclaw.json" \
+        "$VF_OPENCLAW_BIN" config schema \
+        | "$AGENT_OPENCLAW_DIR/tools/node/bin/node" -e '
+            const schema = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            const defaults = schema.properties.agents.properties.defaults.properties;
+            process.stdout.write(Object.hasOwn(defaults, "heartbeat") ? "1" : "0");
+        ' > "$heartbeat.tmp"
+    mv "$heartbeat.tmp" "$heartbeat"
+fi
 """
 
 # OpenClaw rejects a model it cannot resolve as the primary model, which makes setting
@@ -222,7 +235,6 @@ class OpenClawHarness(ACPHarness[OpenClawHarnessConfig]):
                 "defaults": {
                     "workspace": ".",
                     "skipBootstrap": True,
-                    "heartbeat": {"every": "0m"},
                     "sandbox": {"mode": "off"},
                     "model": {"primary": ctx.model},
                     "utilityModel": "",  # Disable background recap model calls.
@@ -249,6 +261,9 @@ class OpenClawHarness(ACPHarness[OpenClawHarnessConfig]):
                 }
             },
         }
+        directory = OPENCLAW_DIR.format(version=self.config.version)
+        if await runtime.read(f"{directory}/has-heartbeat-setting") == b"1":
+            config["agents"]["defaults"]["heartbeat"] = {"every": "0m"}
         if self.config.skills:
             config["skills"] = {"load": {"extraDirs": [skills_dir]}}
         if not self.config.use_bundled_skill:
